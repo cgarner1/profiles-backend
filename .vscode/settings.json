@@ -1,0 +1,9 @@
+{
+    "python.defaultInterpreterPath": "/Users/chris/GameProjects/SocialGame/code/Services/profiles/social_game_profiles_env/bin/python",
+    "python.linting.pylintEnabled": true,
+    "python.linting.enabled": true,
+    "python.linting.pylintArgs": [
+        "--init-hook",
+        "import sys; sys.path.append(0, './app)"
+    ]
+}
