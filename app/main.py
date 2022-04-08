@@ -1,11 +1,13 @@
 import configparser
+from ipaddress import ip_address
 import uvicorn
 from fastapi import FastAPI
 from motor.motor_asyncio import AsyncIOMotorClient
 from routers.profiles import router as profile_router
+import sys
 
 config = configparser.ConfigParser()
-config.read("config.ini")
+config.read(f"{sys.path[0]}/config.ini")
 
 app = FastAPI()
 app.include_router(profile_router)
@@ -25,10 +27,9 @@ async def lights_out():
 
 if __name__ == "__main__":
     server_config = config['Server']
-
     uvicorn.run(
         "main:app",
-        ip = server_config['ip'],
-        port = server_config['port'],
+        host = server_config['ip'],
+        port = int(server_config['port']),
         reload = server_config.getboolean('debug_active')
     )
