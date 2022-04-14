@@ -1,8 +1,9 @@
+from datetime import timedelta
 import time
 from fastapi import APIRouter, Request, Response, status, Depends, HTTPException
-from .models import UserProfile, AuthnUserProfile, TokenData, Token
+from .models import *
 from bson.objectid import ObjectId
-from .auth import AuthHandler
+from .auth import *
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 
@@ -10,15 +11,26 @@ db_collection = "profiles"
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+@router.post("/token", response_model=Token)
+async def login_for_access_token(login_creds: UserLoginData, request: Request):
+    user = await authenticate_user(login_creds.username, login_creds.password, request.app.db[db_collection])
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    access_token = create_access_token(data={"sub": str(user["_id"])}) # TODO, passs in roles etc
+    return {"access_token": access_token, "token_type": "bearer"}
 
-async def get_current_user(req: Request, token: str = Depends(oauth2_scheme)):
+async def get_current_user_from_token(req: Request, token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, AuthHandler.SECRET_KEY, algorithms=AuthHandler.TOKEN_ALGO)
+        payload = jwt.decode(token, SECRET_KEY, algorithms= TOKEN_ALGO)
         user_id = payload.get("sub")
         if user_id is None:
             raise credentials_exception
@@ -26,40 +38,42 @@ async def get_current_user(req: Request, token: str = Depends(oauth2_scheme)):
     
     except JWTError:
         raise credentials_exception
+    
     user = await req.app.db[db_collection].find_one({"_id": ObjectId(user_id)})
     if not user:
         raise credentials_exception
-    return user
+    return user # TODO must pydantic AuthnUserProfile
 
-
-# @app.post("/token", response_model=Token)
-# async def access_token_login()
+@router.get("/profiles/me")
+async def read_users_me(current_user: AuthnUserProfile = Depends(get_current_user_from_token)):
+    return current_user
 
 @router.post("/profiles", status_code=201)
-async def create_profile(req: Request, response: Response, profile: AuthnUserProfile):
+async def create_player_profile(req: Request, response: Response, profile: CreateProfileBody):
     timestamp = str(time.time())
+    profile.password = get_password_hash(profile.password)
     created_profile = profile.dict()
     created_profile["created_at"] = timestamp
     created_profile["last_updated"] = timestamp
+    created_profile["roles"] = ["player"]
 
-    # generate a baseId
-
-    
+    # TODO try router.app
     db_res = await req.app.db[db_collection].insert_one(created_profile)
-    if(db_res.acknowledged):
-        created_profile['_id'] = str(created_profile['_id'])
+    if not db_res.acknowledged:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not add profile to Database"
+        )
+    created_profile['_id'] = str(created_profile['_id'])
+    del created_profile['password']
 
-        # generate + send JWT
-        return created_profile
+    return created_profile
 
-    response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-    return {"error" : "failed to write profile to db"}
 
 @router.get("/profiles/{profile_id}", status_code=200)
-async def get_profile(request: Request, response: Response, profile_id: str):
+async def get_profile_any(request: Request, response: Response, profile_id: str):
     """Basic data for any profile, do not send any private info in this route"""
     # will throw internal error upon unformmated BSON objectID in query due to cast
-    # later update to UUID
     res = await request.app.db[db_collection].find_one({"_id": ObjectId(profile_id)})
     
     if not res:
@@ -70,8 +84,7 @@ async def get_profile(request: Request, response: Response, profile_id: str):
     return res
 
 @router.put("/profiles", status_code=200)
-async def update_profiles(request:Request, response: Response, profile: UserProfile):
-    # todo add authz for this
+async def update_profile(request:Request, response: Response, profile: UserProfile):
     res = await request.app.db[db_collection].update_one({"_id": profile["_id"]}, {"$set": profile.dict})
     if res.modified_count < 1:
         response.status_code = status.HTTP_404
@@ -80,7 +93,6 @@ async def update_profiles(request:Request, response: Response, profile: UserProf
 
 @router.delete("/profiles/{profile_id}", status_code=202)
 async def delete_profile(request: Request, response: Response, profile_id : str):
-    # add authz for this
     res = await request.app.db[db_collection].delete_one({"_id": ObjectId(profile_id)})
     
     # validation for resource acces done between API gateway and authz service

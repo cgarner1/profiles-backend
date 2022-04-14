@@ -9,12 +9,21 @@ class UserProfile(BaseModel):
     username: str
     # todo, on instantiation, add timestamp
 
+class CreateProfileBody(BaseModel):
+    username: str
+    password: str
+    playername: Optional[str] = None
+
+class UserLoginData(BaseModel):
+    username: str
+    password: str
+
 class AuthnUserProfile(BaseModel):
     """model used in req body for registering a new profile"""
     player_name: str
-    account_name: Optional[str] = None
     username: str
     password: str
+    roles: list
 
 class Token(BaseModel):
     access_token: str
