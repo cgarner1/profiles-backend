@@ -20,15 +20,12 @@ async def login_for_access_token(login_creds: UserLoginData, request: Request):
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"}
         )
+    
     access_token = create_access_token(data={"sub": str(user["_id"])}) # TODO, passs in roles etc
     return {"access_token": access_token, "token_type": "bearer"}
 
 async def get_current_user_from_token(req: Request, token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms= TOKEN_ALGO)
         user_id = payload.get("sub")
@@ -42,10 +39,12 @@ async def get_current_user_from_token(req: Request, token: str = Depends(oauth2_
     user = await req.app.db[db_collection].find_one({"_id": ObjectId(user_id)})
     if not user:
         raise credentials_exception
-    return user # TODO must pydantic AuthnUserProfile
+    del user['password']
+    user['_id'] = str(user['_id'])
+    return user
 
 @router.get("/profiles/me")
-async def read_users_me(current_user: AuthnUserProfile = Depends(get_current_user_from_token)):
+async def read_users_me(current_user = Depends(get_current_user_from_token)):   
     return current_user
 
 @router.post("/profiles", status_code=201)
@@ -84,7 +83,12 @@ async def get_profile_any(request: Request, response: Response, profile_id: str)
     return res
 
 @router.put("/profiles", status_code=200)
-async def update_profile(request:Request, response: Response, profile: UserProfile):
+async def update_profile(request:Request, response: Response, profile: UserProfile, token: str = Depends(oauth2_scheme)):
+    user_id = get_userid_from_token(token)
+    
+    if user_id != profile['_id']:
+        raise credentials_exception
+    
     res = await request.app.db[db_collection].update_one({"_id": profile["_id"]}, {"$set": profile.dict})
     if res.modified_count < 1:
         response.status_code = status.HTTP_404
@@ -92,7 +96,12 @@ async def update_profile(request:Request, response: Response, profile: UserProfi
     return profile.dict()
 
 @router.delete("/profiles/{profile_id}", status_code=202)
-async def delete_profile(request: Request, response: Response, profile_id : str):
+async def delete_profile(request: Request, response: Response, profile_id : str, token: str = Depends(oauth2_scheme)):
+    user_id = get_userid_from_token(token)
+    
+    if user_id != profile_id:
+        raise credentials_exception
+    
     res = await request.app.db[db_collection].delete_one({"_id": ObjectId(profile_id)})
     
     # validation for resource acces done between API gateway and authz service
